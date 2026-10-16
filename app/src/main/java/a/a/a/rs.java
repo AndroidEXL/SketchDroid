@@ -1,7 +1,9 @@
 package a.a.a;
 
+import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.InputType;
@@ -30,17 +32,24 @@ import com.besome.sketch.beans.EventBean;
 import com.besome.sketch.beans.MoreBlockCollectionBean;
 import com.besome.sketch.beans.ProjectFileBean;
 import com.besome.sketch.beans.ViewBean;
+import com.besome.sketch.design.DesignActivity;
 import com.besome.sketch.editor.LogicEditorActivity;
 import com.besome.sketch.editor.event.AddEventActivity;
 import com.besome.sketch.editor.event.CollapsibleEventLayout;
+import com.besome.sketch.editor.manage.view.AddViewActivity;
 import com.besome.sketch.lib.base.CollapsibleViewHolder;
 import com.besome.sketch.lib.ui.CollapsibleButton;
+import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.android.material.navigationrail.NavigationRailView;
 
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -50,6 +59,7 @@ import java.util.Set;
 import mod.hey.studios.moreblock.ReturnMoreblockManager;
 import mod.hey.studios.moreblock.importer.MoreblockImporterDialog;
 import mod.hey.studios.util.Helper;
+import mod.jbk.editor.manage.CodeImporter;
 import mod.jbk.editor.manage.MoreblockImporter;
 import pro.sketchware.R;
 
@@ -67,6 +77,10 @@ public class rs extends qA implements View.OnClickListener, MoreblockImporterDia
     private ArrayList<EventBean> drawerViewEvents;
     private TextView noEvents;
     private MaterialButton importMoreBlockFromCollection;
+    private MaterialButton importCode;
+    private EditText importCodeInput;
+    private TextView importCodeFileName;
+    private String codeToImport;
     private String sc_id;
     private EditText searchInput;
     private ImageView sortMenuIcon;
@@ -76,6 +90,48 @@ public class rs extends qA implements View.OnClickListener, MoreblockImporterDia
     private final ActivityResultLauncher<Intent> openEvent = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
         // in case any Events were added, e.g. a new MoreBlock
         refreshEvents();
+    });
+    private final ActivityResultLauncher<String[]> importCodeFilePicker = registerForActivityResult(new ActivityResultContracts.OpenDocument(), uri -> {
+        if (uri == null || importCodeInput == null) {
+            return;
+        }
+        String code = readCodeFromUri(uri);
+        if (code == null) {
+            bB.b(requireContext(), getString(R.string.logic_import_code_failed, "unreadable file"), 0).show();
+            return;
+        }
+        importCodeInput.setText(code);
+        if (importCodeFileName != null) {
+            String name = uri.getLastPathSegment();
+            if (name != null && name.contains("/")) {
+                name = name.substring(name.lastIndexOf('/') + 1);
+            }
+            importCodeFileName.setText(name);
+            importCodeFileName.setVisibility(View.VISIBLE);
+        }
+    });
+    private final ActivityResultLauncher<Intent> createPageForImport = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+        if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null) {
+            return;
+        }
+        ProjectFileBean projectFileBean = result.getData().getParcelableExtra("project_file");
+        if (projectFileBean == null) {
+            return;
+        }
+        jC.b(sc_id).a(projectFileBean);
+        if (projectFileBean.hasActivityOption(ProjectFileBean.OPTION_ACTIVITY_DRAWER)) {
+            jC.b(sc_id).a(2, projectFileBean.getDrawerName());
+        }
+        jC.b(sc_id).j();
+        jC.b(sc_id).l();
+        jC.a(sc_id).a(jC.b(sc_id));
+
+        currentActivity = projectFileBean;
+        convertAndSave(projectFileBean);
+
+        if (requireActivity() instanceof DesignActivity) {
+            ((DesignActivity) requireActivity()).showImportedPage(projectFileBean);
+        }
     });
 
     public static int a(int i) {
@@ -276,6 +332,9 @@ public class rs extends qA implements View.OnClickListener, MoreblockImporterDia
         importMoreBlockFromCollection = parent.findViewById(R.id.tv_import);
         importMoreBlockFromCollection.setText(R.string.logic_button_import_more_block);
         importMoreBlockFromCollection.setOnClickListener(v -> showImportMoreBlockFromCollectionsDialog());
+        importCode = parent.findViewById(R.id.btn_import_code);
+        importCode.setText(R.string.logic_button_import_code);
+        importCode.setOnClickListener(v -> showImportCodeBottomSheet());
         setupSearchAndSort(parent);
     }
 
@@ -376,6 +435,128 @@ public class rs extends qA implements View.OnClickListener, MoreblockImporterDia
     private void showImportMoreBlockFromCollectionsDialog() {
         ArrayList<MoreBlockCollectionBean> moreBlocksInCollections = Pp.h().f();
         new MoreblockImporterDialog(requireActivity(), moreBlocksInCollections, this).show();
+    }
+
+    /**
+     * Shows the bottom sheet that imports plain Java code, either into the screen that's currently
+     * being edited, or into a new screen.
+     */
+    private void showImportCodeBottomSheet() {
+        if (currentActivity == null) {
+            return;
+        }
+
+        View content = getLayoutInflater().inflate(R.layout.bottom_sheet_import_code, null, false);
+        BottomSheetDialog dialog = new BottomSheetDialog(requireContext());
+        dialog.setContentView(content);
+
+        importCodeInput = content.findViewById(R.id.ed_import_code);
+        importCodeFileName = content.findViewById(R.id.tv_import_code_file_name);
+
+        content.findViewById(R.id.btn_import_code_choose_file).setOnClickListener(v ->
+                importCodeFilePicker.launch(new String[]{"*/*"}));
+
+        content.findViewById(R.id.btn_import_code_current_page).setOnClickListener(v -> {
+            String code = importCodeInput.getText() == null ? "" : importCodeInput.getText().toString();
+            if (code.trim().isEmpty()) {
+                bB.b(requireContext(), getString(R.string.logic_import_code_empty), 0).show();
+                return;
+            }
+            dialog.dismiss();
+            importCodeInto(currentActivity, code);
+        });
+
+        content.findViewById(R.id.btn_import_code_new_page).setOnClickListener(v -> {
+            String code = importCodeInput.getText() == null ? "" : importCodeInput.getText().toString();
+            if (code.trim().isEmpty()) {
+                bB.b(requireContext(), getString(R.string.logic_import_code_empty), 0).show();
+                return;
+            }
+            codeToImport = code;
+            dialog.dismiss();
+
+            Intent intent = new Intent(requireContext(), AddViewActivity.class);
+            intent.putStringArrayListExtra("screen_names", getScreenNames());
+            intent.putExtra("request_code", 264);
+            createPageForImport.launch(intent);
+        });
+
+        dialog.setOnDismissListener(d -> {
+            importCodeInput = null;
+            importCodeFileName = null;
+        });
+        dialog.show();
+    }
+
+    private ArrayList<String> getScreenNames() {
+        ArrayList<String> screenNames = new ArrayList<>();
+        ArrayList<ProjectFileBean> activities = jC.b(sc_id).b();
+        if (activities != null) {
+            for (ProjectFileBean projectFileBean : activities) {
+                screenNames.add(projectFileBean.fileName);
+            }
+        }
+        ArrayList<ProjectFileBean> customViews = jC.b(sc_id).c();
+        if (customViews != null) {
+            for (ProjectFileBean projectFileBean : customViews) {
+                screenNames.add(projectFileBean.fileName);
+            }
+        }
+        return screenNames;
+    }
+
+    private String readCodeFromUri(Uri uri) {
+        StringBuilder code = new StringBuilder();
+        try (InputStream input = requireContext().getContentResolver().openInputStream(uri)) {
+            if (input == null) {
+                return null;
+            }
+            BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                code.append(line).append('\n');
+            }
+        } catch (Exception e) {
+            return null;
+        }
+        return code.toString();
+    }
+
+    /**
+     * Converts {@code code} and saves all Variables, More Blocks, Events and Blocks it could produce.
+     */
+    private void importCodeInto(ProjectFileBean projectFileBean, String code) {
+        try {
+            CodeImporter.Result result = new CodeImporter(sc_id, projectFileBean).importCode(code);
+
+            if (currentActivity == projectFileBean) {
+                refreshEvents();
+            }
+
+            String message = getString(R.string.logic_import_code_summary, result.blocks, result.variables,
+                    result.lists, result.moreBlocks, result.events);
+            if (!result.warnings.isEmpty()) {
+                message += "\n\n" + getString(R.string.logic_import_code_warnings_title) + "\n- "
+                        + String.join("\n- ", result.warnings);
+            }
+            new MaterialAlertDialogBuilder(requireContext())
+                    .setTitle(R.string.logic_import_code_title)
+                    .setMessage(message)
+                    .setPositiveButton(R.string.common_word_ok, null)
+                    .show();
+        } catch (Exception e) {
+            String reason = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            bB.b(requireContext(), getString(R.string.logic_import_code_failed, reason), 1).show();
+        }
+    }
+
+    private void convertAndSave(ProjectFileBean projectFileBean) {
+        String code = codeToImport;
+        codeToImport = null;
+        if (code == null || code.trim().isEmpty()) {
+            return;
+        }
+        importCodeInto(projectFileBean, code);
     }
 
     private void deleteEvent(EventBean event, int position) {

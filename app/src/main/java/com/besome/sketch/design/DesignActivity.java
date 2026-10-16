@@ -310,6 +310,17 @@ public class DesignActivity extends BaseAppCompatActivity implements View.OnClic
         }
     }
 
+    /**
+     * Shows the screen that code was imported into, and refreshes the Design page's tabs.
+     *
+     * @param projectFileBean the screen that was created for the import
+     */
+    public void showImportedPage(ProjectFileBean projectFileBean) {
+        projectFile = projectFileBean;
+        currentJavaFileName = projectFileBean.getJavaName();
+        refresh();
+    }
+
     public void setTouchEventEnabled(boolean touchEventEnabled) {
         if (touchEventEnabled) {
             viewPager.enableTouchEvent();

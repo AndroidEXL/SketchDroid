@@ -35,6 +35,16 @@
                 android:text="@string/logic_button_import_more_block"
                 android:textColor="?attr/colorOnSurface" />
 
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_import_code"
+                style="@style/Widget.Material3Expressive.Button.ElevatedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="8dp"
+                android:layout_marginTop="8dp"
+                android:text="@string/logic_button_import_code"
+                android:textColor="?attr/colorOnSurface" />
+
             <RelativeLayout
                 android:id="@+id/search_container"
                 android:layout_width="match_parent"
