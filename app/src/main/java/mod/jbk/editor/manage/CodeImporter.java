@@ -165,7 +165,8 @@ public class CodeImporter {
                 int variableType = variableTypeOf(field.type);
                 if (variableType >= 0) {
                     addVariable(variableType, field.name);
-                    if (field.initializer != null) {
+                    if (field.initializer != null && !isCollectionInitializer(field.initializer)
+                            && !isDefaultInitializer(variableType, field.initializer)) {
                         initializeStatements.add(field.name + " = " + field.initializer + ";");
                     }
                     continue;
@@ -773,15 +774,16 @@ public class CodeImporter {
             return null;
         }
         String declaration = ANNOTATION.matcher(member.substring(0, member.length() - 1)).replaceAll(" ").trim();
-        if (declaration.contains("(")) {
-            return null;
-        }
 
         FieldDecl field = new FieldDecl();
         field.isFinal = Pattern.compile("\\bfinal\\b").matcher(declaration).find();
 
         int equals = declaration.indexOf('=');
         String left = equals < 0 ? declaration : declaration.substring(0, equals);
+        if (left.contains("(") || left.contains(")")) {
+            // the declarator is a method call, e.g. an anonymous class
+            return null;
+        }
         if (equals >= 0) {
             field.initializer = declaration.substring(equals + 1).trim();
         }
@@ -1010,6 +1012,19 @@ public class CodeImporter {
             case "ArrayList<String>", "List<String>" -> "l|List String";
             case "ArrayList<HashMap<String,Object>>", "List<HashMap<String,Object>>" -> "l|List Map";
             default -> null;
+        };
+    }
+
+    /**
+     * Sketchware declares Maps and Lists with {@code = new HashMap<>()} / {@code = new ArrayList<>()},
+     * so an initializer like that doesn't need to be added to {@code initializeLogic} again.
+     */
+    private static boolean isDefaultInitializer(int variableType, String initializer) {
+        return switch (variableType) {
+            case 0 -> initializer.equals("false");
+            case 1 -> initializer.equals("0") || initializer.equals("0.0");
+            case 2 -> initializer.equals("\"\"");
+            default -> false;
         };
     }
 
