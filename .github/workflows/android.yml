@@ -157,6 +157,45 @@ jobs:
           mv app/build/outputs/apk/release/app-release.apk \
              app/build/outputs/apk/release/app-release-${{ steps.set_sha.outputs.short_sha }}.apk
 
+      # Prints and publishes the APK details (size, checksum, signer) so the
+      # build can be reviewed straight from the workflow run page.
+      - name: Inspect APK
+        run: |
+          APK="app/build/outputs/apk/release/app-release-${{ steps.set_sha.outputs.short_sha }}.apk"
+          SIZE=$(stat -c %s "$APK")
+          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+          DEX_COUNT=$(unzip -Z1 "$APK" | grep -cE 'classes[0-9]*\.dex$' || true)
+          ENTRIES=$(unzip -Z1 "$APK" | wc -l)
+          APKSIGNER=""
+          if [ -n "${ANDROID_HOME:-}" ]; then
+            APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1 || true)
+          fi
+          SIGN_INFO="apksigner was not available in the runner image"
+          if [ -n "$APKSIGNER" ]; then
+            SIGN_INFO=$("$APKSIGNER" verify --print-certs "$APK" 2>&1 | grep -iE 'signer #1 certificate DN|verified' | head -3 | paste -sd'; ' - || true)
+            SIGN_INFO=${SIGN_INFO:-"verification failed"}
+          fi
+          echo "APK: $APK"
+          echo "Size: $SIZE bytes"
+          echo "SHA-256: $SHA"
+          echo "Dex files: $DEX_COUNT"
+          echo "Zip entries: $ENTRIES"
+          echo "Signing: $SIGN_INFO"
+          {
+            echo "### Release APK"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| File | \`$(basename "$APK")\` |"
+            echo "| Size | ${SIZE} bytes ($((SIZE / 1048576)) MiB) |"
+            echo "| SHA-256 | \`${SHA}\` |"
+            echo "| Dex files | ${DEX_COUNT} |"
+            echo "| Zip entries | ${ENTRIES} |"
+            echo "| Signing | ${SIGN_INFO} |"
+            echo "| Commit | \`${GITHUB_SHA}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "APK inspection finished."
+
       - name: Upload Release APK
         uses: actions/upload-artifact@v7
         with:
