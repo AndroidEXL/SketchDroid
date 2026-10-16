@@ -15,8 +15,44 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Forks do not inherit the repository secrets of the upstream project. This job
+  # reports which optional integrations are configured so the jobs below can be
+  # skipped instead of failing on a fork that only wants to build the APK.
+  preflight:
+    name: Check optional secrets
+    runs-on: ubuntu-latest
+    outputs:
+      telegram: ${{ steps.check.outputs.telegram }}
+      about_app: ${{ steps.check.outputs.about_app }}
+    steps:
+      - name: Detect optional secrets
+        id: check
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GH_ABOUT_APP_WORKFLOW_TOKEN: ${{ secrets.GH_ABOUT_APP_WORKFLOW_TOKEN }}
+        run: |
+          if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_API_ID" ] && [ -n "$TELEGRAM_API_HASH" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+            echo "telegram=true" >> "$GITHUB_OUTPUT"
+            echo "Telegram secrets found."
+          else
+            echo "telegram=false" >> "$GITHUB_OUTPUT"
+            echo "Telegram secrets are missing: the Telegram jobs will be skipped."
+          fi
+
+          if [ -n "$GH_ABOUT_APP_WORKFLOW_TOKEN" ]; then
+            echo "about_app=true" >> "$GITHUB_OUTPUT"
+            echo "About app data token found."
+          else
+            echo "about_app=false" >> "$GITHUB_OUTPUT"
+            echo "GH_ABOUT_APP_WORKFLOW_TOKEN is missing: the app data job will be skipped."
+          fi
+
   notifyTelegram:
-    if: ${{ !startsWith(github.ref, 'refs/heads/wip/') }}
+    needs: preflight
+    if: ${{ needs.preflight.outputs.telegram == 'true' && !startsWith(github.ref, 'refs/heads/wip/') }}
     name: Notify Telegram
     runs-on: ubuntu-latest
     steps:
@@ -56,13 +92,53 @@ jobs:
           java-version: 17
           distribution: temurin
 
-      - name: Set environmental variables
+      # The Firebase (google-services) plugin refuses to configure the release
+      # variant unless a google-services.json is present. When the secret is not
+      # available (e.g. in a fork) a mock configuration is written instead, which
+      # keeps the APK buildable while leaving Firebase features inactive.
+      - name: Configure google-services.json
         shell: bash
         env:
           JSON_CONTENT: ${{ secrets.GOOGLE_SERVICES_JSON }}
-        if: ${{ env.JSON_CONTENT != '' }}
         run: |
-          printf 'GOOGLE_SERVICES_JSON<<EOF\n%s\nEOF\n' "$JSON_CONTENT" >> $GITHUB_ENV
+          if [ -n "$JSON_CONTENT" ]; then
+            echo "GOOGLE_SERVICES_JSON secret found: passing it to the Gradle build."
+            printf 'GOOGLE_SERVICES_JSON<<EOF\n%s\nEOF\n' "$JSON_CONTENT" >> $GITHUB_ENV
+          else
+            echo "GOOGLE_SERVICES_JSON secret is not set: generating a mock google-services.json."
+            cat > app/google-services.json <<'JSON'
+          {
+            "project_info": {
+              "project_number": "123456789000",
+              "firebase_url": "https://mock-project-default-rtdb.firebaseio.com",
+              "project_id": "mock-project",
+              "storage_bucket": "mock-project.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:123456789000:android:mockappid123456",
+                  "android_client_info": {
+                    "package_name": "pro.sketchware"
+                  }
+                },
+                "oauth_client": [],
+                "api_key": [
+                  {
+                    "current_key": "mock_AIzaSyBQJCUXVKUjD38-u5pWkqMtesIfFvxAcvs"
+                  }
+                ],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": []
+                  }
+                }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          JSON
+          fi
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
@@ -88,10 +164,10 @@ jobs:
           path: app/build/outputs/apk/release/app-release-${{ steps.set_sha.outputs.short_sha }}.apk
 
   aggregateAndSend:
-    if: ${{ !startsWith(github.ref, 'refs/heads/wip/') }}
+    needs: [preflight, build]
+    if: ${{ needs.preflight.outputs.telegram == 'true' && !startsWith(github.ref, 'refs/heads/wip/') }}
     name: Send APKs to Telegram
     runs-on: ${{ vars.IS_USING_HOSTED_RUNNERS == 'true' && 'self-hosted' || 'ubuntu-latest' }}
-    needs: build
     steps:
       - uses: actions/checkout@v6
 
@@ -135,7 +211,8 @@ jobs:
         continue-on-error: true
 
   updateAppData:
-    if: ${{ !startsWith(github.ref, 'refs/heads/wip/') }}
+    needs: preflight
+    if: ${{ needs.preflight.outputs.about_app == 'true' && !startsWith(github.ref, 'refs/heads/wip/') }}
     name: Update App Data
     runs-on: ubuntu-latest
     steps:
@@ -166,4 +243,3 @@ jobs:
           git commit -m "feat: Update app about screen data"
           git push
         continue-on-error: true
-      
