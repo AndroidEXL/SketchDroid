@@ -212,23 +212,23 @@ Add variable / Add custom variable / Remove variable، Add list / Add custom lis
 
 الدالة المسؤولة: `DesignActivity$BuildTask.doInBackground()` (حوالي السطر 1125 → 1287). الخطوات بالترتيب مع ما يحدث فعليًا:
 
-| # | الخطوة | ما يحدث |
+| # (في شريط التقدّم من 20) | الخطوة | ما يحدث |
 | --- | --- | --- |
 | 1 | حذف الملفات المؤقتة | مسح مجلد بناء المشروع (`projectMyscPath`) |
-| 2 | توليد ملفات المصدر | `yq.a()` / `yq.b(...)` / `yq.f()` / `yq.e()` تنشئ بنية مشروع Gradle كاملة (java, res, assets, libs) + نسخ الصور/الأصوات/الخطوط إلى `res` و`assets` |
-| 3 | استخراج AAPT2 | `maybeExtractAapt2()` ينسخ `aapt2-<abi>` الملائم لمعمارية الجهاز |
-| 3b | استخراج أدوات البناء | `BuiltInLibraries.extractCompileAssets()`: `android.jar.zip` → `android.jar`، `dexs.zip` → `dexs/`، `libs.zip` → `libs/`، `testkey.zip` → `testkey/`، + `core-lambda-stubs.jar` |
-| 4-8 | **AAPT2** | `ProjectBuilder.compileResources()` → `ResourceCompiler.Aapt2Compiler`: تجميع الموارد (`compile`) ثم الربط (`link`) مع `android.jar` وموارد المكتبات، وتوليد `R.java` |
-| 11 | ViewBinding | `generateViewBinding()` توليد أصناف الربط إن كان مفعّلاً |
-| 12 | Kotlin (اختياري) | `KotlinCompilerBridge.compileKotlinCodeIfPossible()` لمشاريع Kotlin |
-| 13 | **تصريف Java** | `compileJavaCode()` عبر **ECJ** (`org.eclipse.jdt`, إصدار 3.26.0) مع classpath يضم المكتبات المدمجة + `core-lambda-stubs.jar` |
-| 14 | StringFog | تشفير النصوص في الأصناف المصرّفة (إن كان مفعّلاً) |
-| 15 | ProGuard / R8 | `ProguardHandler` ثم `runProguard()` أو `runR8()` (تصغير الكود + قواعد المستخدم من `proguard-rules.pro`) |
+| 2 | توليد ملفات المصدر | `yq.a()` / `yq.b(...)` / `yq.f()` / `yq.e()` تنشئ بنية المشروع كاملة (java, res, assets, libs) + نسخ الصور/الأصوات/الخطوط إلى `res` و`assets` |
+| 3–6 | استخراج AAPT2 وأصول البناء | `maybeExtractAapt2()` ينسخ `aapt2-<abi>` حسب معمارية الجهاز، ثم `BuiltInLibraries.extractCompileAssets()`: `android.jar.zip` → `android.jar` (خطوة 3)، `dexs.zip` → `dexs/` (4)، `libs.zip` → `libs/` (5)، `testkey.zip` → `testkey/` (6) + `core-lambda-stubs.jar` |
+| 8 | **AAPT2** | `ProjectBuilder.compileResources()` → `ResourceCompiler.Aapt2Compiler`: تجميع الموارد (`compile`) ثم الربط (`link`) مع `android.jar` وموارد المكتبات، وتوليد `R.java` |
+| 11 | ViewBinding | `generateViewBinding()` لتوليد أصناف الربط إن كان مفعّلاً |
+| — | Kotlin (اختياري) | `KotlinCompilerBridge.compileKotlinCodeIfPossible()` لمشاريع Kotlin |
+| 13 | **تصريف Java** | `compileJavaCode()` عبر **ECJ** (`org.eclipse.jdt` 3.26.0) مع classpath يضم المكتبات المدمجة + `core-lambda-stubs.jar` |
+| — | StringFog | `StringfogHandler.start()`: تشفير النصوص في الأصناف المصرّفة (إن كان مفعّلاً) |
+| — | ProGuard / R8 | `ProguardHandler.start()` ثم `runProguard()` أو `runR8()` (تصغير الكود + قواعد `proguard-rules.pro`) |
 | 17 | **Dexing** | `createDexFilesFromClasses()`: يستخدم **D8** افتراضيًا (`DexCompiler` مع minApiLevel من إعدادات المشروع)، أو `dx` القديم (`com.android.dx.command.dexer.Main` مع `--multi-dex`) إن أُغلق D8؛ ويُتخطّى كليًا إذا كان التصغير بـ R8 مفعّلاً لأن R8 يتولّى الـ dexing |
 | 18 | دمج الـ DEX | `getDexFilesReady()`: دمج dex المشروع مع dex المكتبات المدمجة (`dexs/`) — **آخر تعديل على main (`f76133a`) استبدل `DexMerger` القديم بدمج D8** لدعم Multidex بشكل صحيح |
 | 19 | بناء APK | `buildApk()` عبر `com.android.sdklib.build.ApkBuilder` → APK غير موقّع |
 | 20 | التوقيع | `signDebugApk()` بمفتاح debug المستخرج من `testkey.zip` ثم `zipalign` (`zipalign-java`) — أو بمفتاح المستخدم عند التصدير الرسمي (`apksig`) |
-| 21 | التثبيت | `installBuiltApk()`: إن كان الجهاز **root** ومُفعّل خيار التثبيت التلقائي → `pm install` مباشرة (مع إمكانية الفتح التلقائي)؛ وإلا يظهر مُثبِّت الحزم العادي |
+| — | التثبيت | `installBuiltApk()`: إن كان الجهاز **root** ومُفعّل خيار التثبيت التلقائي → `pm install` مباشرة (مع إمكانية الفتح التلقائي)؛ وإلا يظهر مُثبِّت الحزم العادي |
+ `installBuiltApk()`: إن كان الجهاز **root** ومُفعّل خيار التثبيت التلقائي → `pm install` مباشرة (مع إمكانية الفتح التلقائي)؛ وإلا يظهر مُثبِّت الحزم العادي |
 
 شريط التقدّم يعرض هذه الخطوات من 20 خطوة (`onProgress(progress, step)` + إشعار في شريط الحالة)، ويمكن إلغاء البناء (`cancelBuild`)، ويمكن تفعيل **البناء في الخلفية** من الإعدادات.
 
